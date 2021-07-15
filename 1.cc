@@ -2,7 +2,11 @@
 #include <Windows.h>
 #include <format>
 BOOL EndIs(std::string &src,const char * str) {
-	return TRUE;
+	BOOL ret = TRUE;
+	for (int i = 0; i < strlen(str); i++) {
+		ret &= src[src.length() - 1 - i] == str[strlen(str) - 1 - i];
+	}
+	return ret;
 }
 int ClipThePath(std::string& src) {
 	if (EndIs(src, ".exe") || EndIs(src, ".dll")) {
@@ -70,13 +74,146 @@ namespace reg_icon {
 	}
 	std::string IconFilePath() {
 		//打开窗口的代码
+		OPENFILENAMEA ofn;       // common dialog box structure
+		char szFile[260];       // buffer for file name
+		HWND hwnd=0;              // owner window
+		HANDLE hf;              // file handle
+
+		// Initialize OPENFILENAME
+		ZeroMemory(&ofn, sizeof(ofn));
+		ofn.lStructSize = sizeof(ofn);
+		ofn.hwndOwner = hwnd;
+		ofn.lpstrFile = szFile;
+		// Set lpstrFile[0] to '\0' so that GetOpenFileName does not 
+		// use the contents of szFile to initialize itself.
+		ofn.lpstrFile[0] = '\0';
+		ofn.nMaxFile = sizeof(szFile);
+		ofn.lpstrFilter = "All\0*.*\0";
+		ofn.nFilterIndex = 1;
+		ofn.lpstrFileTitle = NULL;
+		ofn.nMaxFileTitle = 0;
+		ofn.lpstrInitialDir = NULL;
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+		// Display the Open dialog box. 
+
+		if (GetOpenFileNameA(&ofn) == TRUE)
+			return std::string(szFile);
 		return std::string();
+	}
+	Fl_RGB_Image* Icon_To_Flrgb(HICON hIcon)
+	{
+		BITMAP bm;
+		ICONINFO iconInfo;
+		GetIconInfo(hIcon, &iconInfo);
+		GetObject(iconInfo.hbmColor, sizeof(BITMAP), &bm);
+		int width = bm.bmWidth;
+		int height = bm.bmHeight;
+		int bytesPerScanLine = (width * 3 + 3) & 0xFFFFFFFC;
+		int size = bytesPerScanLine * height;
+		BITMAPINFO infoheader = { 0 };
+		infoheader.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		infoheader.bmiHeader.biWidth = width;
+		infoheader.bmiHeader.biHeight = height;
+		infoheader.bmiHeader.biPlanes = 1;
+		infoheader.bmiHeader.biBitCount = 24;
+		infoheader.bmiHeader.biCompression = BI_RGB;
+		infoheader.bmiHeader.biSizeImage = size;
+		// allocate Memory for Icon RGB data plus Icon mask plus ARGB buffer for the resulting image
+		unsigned char* pixelsIconRGB = new unsigned char[height * width * 4];
+		if (pixelsIconRGB == NULL)
+		{
+			return NULL;
+		}
+		unsigned char* alphaPixels = new unsigned char[height * width * 4];
+		if (alphaPixels == NULL)
+		{
+			delete[] pixelsIconRGB;
+			return NULL;
+		}
+		unsigned char* imagePixels = new unsigned char[height * width * 4];
+		if (imagePixels == NULL)
+		{
+			delete[] pixelsIconRGB;
+			delete[] alphaPixels;
+			return NULL;
+		}
+		HDC hDC = CreateCompatibleDC(NULL);
+		if (hDC == NULL)
+		{
+			delete[] pixelsIconRGB;
+			delete[] alphaPixels;
+			return NULL;
+		}
+		HBITMAP hBmpOld = (HBITMAP)SelectObject(hDC, (HGDIOBJ)iconInfo.hbmColor);
+		if (GetDIBits(hDC, iconInfo.hbmColor, 0, height, (LPVOID)pixelsIconRGB, &infoheader, DIB_RGB_COLORS) == 0)
+		{
+			DeleteDC(hDC);
+			delete[] pixelsIconRGB;
+			delete[] alphaPixels;
+			delete[] imagePixels;
+			return NULL;
+		}
+		SelectObject(hDC, hBmpOld);
+		// now get the mask
+		if (GetDIBits(hDC, iconInfo.hbmMask, 0, height, (LPVOID)alphaPixels, &infoheader, DIB_RGB_COLORS) == 0)
+		{
+			DeleteDC(hDC);
+			delete[] pixelsIconRGB;
+			delete[] alphaPixels;
+			delete[] imagePixels;
+			return NULL;
+		}
+		DeleteDC(hDC);
+		int x = 0;
+		int currentSrcPos = 0;
+		int currentDestPos = 0;
+		int linePosSrc = 0;
+		int linePosDest = 0;
+		int vsDest = height - 1;
+		for (int y = 0; y < height; y++)
+		{
+			linePosSrc = (vsDest - y) * (width * 3);
+			linePosDest = y * width * 4;
+			for (x = 0; x < width; x++)
+			{
+				currentDestPos = linePosDest + (x * 4);
+				currentSrcPos = linePosSrc + (x * 3);
+				imagePixels[currentDestPos + 0] = pixelsIconRGB[currentSrcPos + 2];
+				imagePixels[currentDestPos + 1] = pixelsIconRGB[currentSrcPos + 1];
+				imagePixels[currentDestPos + 2] = pixelsIconRGB[currentSrcPos + 0];
+				imagePixels[currentDestPos + 3] = 0xFF - alphaPixels[currentSrcPos];
+			}
+		}
+		Fl_RGB_Image* pImage = new Fl_RGB_Image(imagePixels, width, height, 4);
+		delete[] pixelsIconRGB;
+		delete[] alphaPixels;
+		return pImage;
+	}
+	void remove_fl_rgb_image(Fl_RGB_Image** img)
+	{
+		if (img != NULL)
+		{
+			Fl_RGB_Image* srci = (Fl_RGB_Image*)*img;
+			if ((srci->array != NULL) && (srci->alloc_array == 0))
+			{
+				delete[] srci->array;
+			}
+			delete srci;
+			*img = NULL;
+		}
 	}
 	Fl_Image* IconImg(std::string filepath) {
 		int num = ClipThePath(filepath);
-		if (EndIs(filepath,".exe")||EndIs(filepath,".dll")){
-			HICON hIcon = ExtractIconA(GetModuleHandle(NULL), filepath.c_str(), num);
-			//算了不重要不写了
+		int max = (int)ExtractIconA(GetModuleHandle(NULL), filepath.c_str(), -1);
+		if (EndIs(filepath,".exe")||EndIs(filepath,".dll")|| EndIs(filepath, ".ico")){
+			HICON hIcon;
+			ExtractIconExA(filepath.c_str(), num, &hIcon, NULL, max);
+			if (hIcon > 0)
+			{
+				Fl_RGB_Image* a = Icon_To_Flrgb(hIcon);
+				return a->copy();
+			}
 		}
 		return NULL;
 	}

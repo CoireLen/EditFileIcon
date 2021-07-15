@@ -59,7 +59,11 @@ void bt_load_call(Fl_Widget* w, void* v)
 	if (ts->data.size() >= 2) {
 		ts->in_icopath->value(ts->data[1].c_str());
 		//载入dll exe ico图标
-
+		Fl_Image* img=reg_icon::IconImg(ts->data[1]);
+		if (img != NULL) {
+			ts->bx_icon->image(img->copy());
+			ts->bx_icon->label("");
+		}
 	}
 	else {
 		reg_icon::ShowMessage(ts->data[0]);//输出报错
@@ -69,6 +73,13 @@ void bt_open_call(Fl_Widget* w, void* v) {
 	ToolScreen* ts = (ToolScreen*)v;
 	auto path = reg_icon::IconFilePath();
 	ts->in_icopath->value(path.c_str());
+	if (path.size()!=0) {
+		Fl_Image* img = reg_icon::IconImg(path);
+		if (img != NULL) {
+			ts->bx_icon->image(img->copy());
+			ts->bx_icon->label("");
+		}
+	}
 	//载入dll exe ico图标
 }
 void bt_set_call(Fl_Widget* w, void* v) //设置.xxx的图标
